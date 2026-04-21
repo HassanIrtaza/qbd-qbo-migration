@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QBD → QuickBooks Online Migration</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            qb: {
+              50: '#e8f5e9',
+              100: '#c8e6c9',
+              500: '#2CA01C',
+              600: '#248C19',
+              700: '#1c7214',
+              900: '#0d3e08',
+            },
+            ink: { 900: '#0e1116', 700: '#2d333b', 500: '#6e7681' }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+    body { font-family: 'Inter', sans-serif; }
+    .mono { font-family: 'Menlo', 'Monaco', 'Courier New', monospace; font-size: 12px; }
+    .fade-in { animation: fadeIn 0.3s ease-in; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+    .pulse-dot { animation: pulse 1.8s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+    .spinner { border: 2.5px solid #e5e7eb; border-top: 2.5px solid #2CA01C; border-radius: 50%; width: 18px; height: 18px; animation: spin 0.7s linear infinite; display: inline-block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .arrow-flow { background: linear-gradient(90deg, #2CA01C 0%, #2CA01C 50%, transparent 50%); background-size: 20px 100%; animation: flow 1.2s linear infinite; }
+    @keyframes flow { to { background-position: 20px 0; } }
+    .log-line { padding: 2px 10px; border-left: 3px solid transparent; }
+    .log-INFO { border-color: #2CA01C; }
+    .log-WARNING { border-color: #f59e0b; background: #fffbeb; }
+    .log-ERROR { border-color: #ef4444; background: #fef2f2; }
+  </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+
+  <!-- Header -->
+  <header class="bg-white border-b border-gray-200 sticky top-0 z-10">
+    <div class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 bg-qb-500 rounded-xl flex items-center justify-center shadow-sm">
+          <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5"
+              d="M13 7l5 5m0 0l-5 5m5-5H6"/>
+          </svg>
+        </div>
+        <div>
+          <h1 class="text-xl font-bold text-ink-900">QBD → QuickBooks Online</h1>
+          <p class="text-xs text-ink-500">Migrate QuickBooks Desktop data to the cloud</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-3">
+        {% if demo_mode %}
+        <span class="px-2.5 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-800 border border-amber-200">
+          Demo Mode
+        </span>
+        {% else %}
+        <span class="px-2.5 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-700 border border-gray-200 uppercase tracking-wide">
+          {{ environment }}
+        </span>
+        {% endif %}
+        <div id="statusBadge" class="px-3 py-1.5 rounded-full text-xs font-semibold bg-gray-100 text-gray-600 flex items-center gap-2">
+          <span class="w-2 h-2 rounded-full bg-gray-400"></span>
+          <span id="statusText">Ready</span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-7xl mx-auto px-6 py-6 space-y-6">
+
+    <!-- Connection row -->
+    <div class="grid grid-cols-1 lg:grid-cols-[1fr_auto_1fr] gap-4 items-stretch">
+
+      <!-- Source: QBD -->
+      <div class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+        <div class="px-5 py-3.5 bg-gradient-to-r from-emerald-50 to-green-50 border-b border-green-100 flex items-center gap-2.5">
+          <div class="w-8 h-8 bg-emerald-600 rounded-lg flex items-center justify-center">
+            <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+            </svg>
+          </div>
+          <div>
+            <h2 class="font-semibold text-ink-900">QuickBooks Desktop</h2>
+            <p class="text-xs text-ink-500">Source · Excel exports</p>
+          </div>
+        </div>
+        <div class="p-5 space-y-4">
+          <div id="qbdSummary" class="flex items-baseline justify-between">
+            <div>
+              <div id="qbdFound" class="text-3xl font-bold text-ink-900">0</div>
+              <div class="text-xs text-ink-500">of 8 files ready</div>
+            </div>
+            <div id="qbdProgress" class="text-xs text-emerald-700 font-medium">Checking...</div>
+          </div>
+          <div id="qbdFileList" class="space-y-1 max-h-40 overflow-y-auto text-sm"></div>
+          <div class="flex gap-2 pt-1">
+            <button onclick="generateSample()" id="btnGenSample"
+              class="flex-1 px-3.5 py-2.5 bg-emerald-600 text-white text-sm font-semibold rounded-lg hover:bg-emerald-700 transition shadow-sm">
+              Generate Sample
+            </button>
+            <label class="flex-1 px-3.5 py-2.5 bg-white border border-gray-300 text-ink-700 text-sm font-semibold rounded-lg hover:bg-gray-50 transition cursor-pointer text-center">
+              Upload Files
+              <input type="file" multiple accept=".xlsx" class="hidden" onchange="uploadFiles(this.files)">
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <!-- Flow arrow -->
+      <div class="hidden lg:flex flex-col items-center justify-center px-2">
+        <div class="h-1 w-16 rounded-full bg-gray-200 relative overflow-hidden">
+          <div id="flowArrow" class="absolute inset-0 arrow-flow opacity-0 transition-opacity"></div>
+        </div>
+        <svg class="w-5 h-5 text-gray-400 -mt-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 8l4 4m0 0l-4 4m4-4H3"/>
+        </svg>
+      </div>
+
+      <!-- Target: QBO -->
+      <div class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+        <div class="px-5 py-3.5 bg-gradient-to-r from-qb-50 to-green-50 border-b border-qb-100 flex items-center gap-2.5">
+          <div class="w-8 h-8 bg-qb-500 rounded-lg flex items-center justify-center">
+            <svg class="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 24 24">
+              <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2"/>
+              <path stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none" d="M8 12a4 4 0 108 0"/>
+            </svg>
+          </div>
+          <div>
+            <h2 class="font-semibold text-ink-900">QuickBooks Online</h2>
+            <p class="text-xs text-ink-500">Target · OAuth 2.0 · {{ environment }}</p>
+          </div>
+        </div>
+        <div class="p-5 space-y-4">
+          <div id="qboConnected" class="hidden space-y-2 fade-in">
+            <div class="flex items-center gap-2 text-sm">
+              <span class="w-2 h-2 rounded-full bg-qb-500 pulse-dot"></span>
+              <span class="text-ink-700 font-medium">Connected</span>
+            </div>
+            <div class="text-sm">
+              <div class="text-ink-500">Company</div>
+              <div id="qboCompany" class="font-semibold text-ink-900">—</div>
+            </div>
+            <div class="text-sm">
+              <div class="text-ink-500">Realm ID</div>
+              <div id="qboRealm" class="mono text-ink-700">—</div>
+            </div>
+            <button onclick="disconnectQBO()" class="w-full mt-2 px-3.5 py-2 bg-white border border-gray-300 text-ink-700 text-sm font-medium rounded-lg hover:bg-gray-50">
+              Disconnect
+            </button>
+          </div>
+          <div id="qboDisconnected" class="space-y-3">
+            <p class="text-sm text-ink-500">Authorize this app to write into your QuickBooks Online company.</p>
+            <a href="/connect" id="connectBtn"
+              class="block text-center px-4 py-3 bg-qb-500 hover:bg-qb-600 text-white text-sm font-bold rounded-lg shadow-sm transition">
+              Connect to QuickBooks
+            </a>
+            {% if demo_mode %}
+            <p class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+              Running in <strong>Demo Mode</strong> — clicking Connect will simulate an authorized session so you can walk through the full UI without real Intuit credentials.
+            </p>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Migration panel -->
+    <div class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+      <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+        <div>
+          <h2 class="font-semibold text-ink-900">Migration</h2>
+          <p class="text-xs text-ink-500">Run a dry-run first, then migrate live to QuickBooks Online.</p>
+        </div>
+        <div class="flex items-center gap-2">
+          <label class="flex items-center gap-2 text-sm text-ink-700 pr-2">
+            <input type="checkbox" id="dryRun" checked class="rounded border-gray-300 text-qb-500 focus:ring-qb-500">
+            Dry Run
+          </label>
+          <button onclick="startMigration()" id="btnStart"
+            class="px-5 py-2.5 bg-qb-500 hover:bg-qb-600 disabled:bg-gray-300 disabled:cursor-not-allowed text-white text-sm font-bold rounded-lg shadow-sm transition flex items-center gap-2">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 3l14 9-14 9V3z"/>
+            </svg>
+            Start Migration
+          </button>
+        </div>
+      </div>
+
+      <!-- Phase indicator -->
+      <div class="px-6 py-5 border-b border-gray-200">
+        <div class="grid grid-cols-4 gap-2">
+          <div class="phase" data-phase="extract">
+            <div class="phase-dot"></div>
+            <div class="phase-label">Extract</div>
+            <div class="phase-sub">Read QBD exports</div>
+          </div>
+          <div class="phase" data-phase="transform">
+            <div class="phase-dot"></div>
+            <div class="phase-label">Transform</div>
+            <div class="phase-sub">Map to QBO</div>
+          </div>
+          <div class="phase" data-phase="load">
+            <div class="phase-dot"></div>
+            <div class="phase-label">Load</div>
+            <div class="phase-sub">POST to QBO API</div>
+          </div>
+          <div class="phase" data-phase="validate">
+            <div class="phase-dot"></div>
+            <div class="phase-label">Validate</div>
+            <div class="phase-sub">Compare counts</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Log console + summary -->
+      <div class="grid grid-cols-1 lg:grid-cols-[1fr_320px]">
+        <div class="border-r border-gray-200">
+          <div class="px-6 py-2 bg-gray-900 text-gray-300 text-xs uppercase tracking-wide flex items-center justify-between">
+            <span>Migration Log</span>
+            <button onclick="clearLog()" class="text-gray-400 hover:text-white text-xs">clear</button>
+          </div>
+          <div id="logConsole" class="mono bg-gray-900 text-gray-200 h-80 overflow-y-auto py-2">
+            <div class="log-line text-gray-500">Waiting for migration to start...</div>
+          </div>
+        </div>
+        <div class="p-5 space-y-4">
+          <div>
+            <div class="text-xs uppercase tracking-wide text-ink-500 font-semibold mb-2">Results</div>
+            <div id="summaryBox" class="space-y-1.5 text-sm text-ink-500">
+              Run a migration to see counts.
+            </div>
+          </div>
+          <div>
+            <div class="text-xs uppercase tracking-wide text-ink-500 font-semibold mb-2">Warnings</div>
+            <div id="warningsBox" class="text-sm text-ink-500">—</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <footer class="text-center text-xs text-ink-500 pt-2 pb-6">
+      <a href="https://github.com/HassanIrtaza/qbd-qbo-migration" class="hover:text-qb-600">github.com/HassanIrtaza/qbd-qbo-migration</a>
+      · MIT
+    </footer>
+  </main>
+
+  <style>
+    .phase { @apply relative pl-6 py-1; }
+    .phase-dot { @apply absolute left-0 top-2 w-3.5 h-3.5 rounded-full bg-gray-200 border-2 border-white ring-2 ring-gray-200; }
+    .phase-label { @apply text-sm font-semibold text-ink-700; }
+    .phase-sub { @apply text-xs text-ink-500; }
+    .phase.active .phase-dot { @apply bg-qb-500 ring-qb-200; animation: pulse 1.2s infinite; }
+    .phase.done .phase-dot { @apply bg-qb-500 ring-qb-100; }
+    .phase.done .phase-label { @apply text-qb-700; }
+  </style>
+
+  <script>
+    // ── State ──────────────────────────────────────────────────
+    let eventSource = null;
+
+    // ── Boot ──────────────────────────────────────────────────
+    async function boot() {
+      await Promise.all([refreshQBD(), refreshStatus()]);
+      // Auto-refresh files every 5s while idle
+      setInterval(() => { if (!eventSource) refreshQBD(); }, 5000);
+    }
+
+    // ── Status ────────────────────────────────────────────────
+    async function refreshStatus() {
+      const r = await fetch('/api/status');
+      const s = await r.json();
+      const conn = document.getElementById('qboConnected');
+      const disc = document.getElementById('qboDisconnected');
+      if (s.connected) {
+        conn.classList.remove('hidden');
+        disc.classList.add('hidden');
+        document.getElementById('qboCompany').textContent = s.company || '—';
+        document.getElementById('qboRealm').textContent = s.realm_id || '—';
+      } else {
+        conn.classList.add('hidden');
+        disc.classList.remove('hidden');
+      }
+    }
+
+    async function disconnectQBO() {
+      if (!confirm('Disconnect from QuickBooks Online?')) return;
+      await fetch('/api/disconnect', { method: 'POST' });
+      await refreshStatus();
+    }
+
+    // ── QBD files ─────────────────────────────────────────────
+    async function refreshQBD() {
+      const r = await fetch('/api/check-qbd');
+      const data = await r.json();
+      document.getElementById('qbdFound').textContent = data.found;
+      document.getElementById('qbdProgress').textContent =
+        data.found === data.total ? 'All files ready' :
+        data.found === 0 ? 'No files yet' : `${data.found}/${data.total} ready`;
+
+      const list = document.getElementById('qbdFileList');
+      list.innerHTML = '';
+      for (const [name, info] of Object.entries(data.files)) {
+        const row = document.createElement('div');
+        row.className = 'flex items-center justify-between py-0.5';
+        row.innerHTML = `
+          <span class="flex items-center gap-2">
+            <span class="${info.exists ? 'text-emerald-600' : 'text-gray-300'}">${info.exists ? '●' : '○'}</span>
+            <span class="${info.exists ? 'text-ink-700' : 'text-ink-500'} text-xs">${name}</span>
+          </span>
+          <span class="text-xs text-ink-500">${info.exists ? fmtSize(info.size) : ''}</span>
+        `;
+        list.appendChild(row);
+      }
+    }
+
+    function fmtSize(b) {
+      if (b < 1024) return b + ' B';
+      if (b < 1024*1024) return (b/1024).toFixed(1) + ' KB';
+      return (b/1024/1024).toFixed(1) + ' MB';
+    }
+
+    async function generateSample() {
+      const btn = document.getElementById('btnGenSample');
+      btn.disabled = true; btn.textContent = 'Generating...';
+      const r = await fetch('/api/generate-sample', { method: 'POST' });
+      await r.json();
+      btn.disabled = false; btn.textContent = 'Generate Sample';
+      await refreshQBD();
+    }
+
+    async function uploadFiles(files) {
+      if (!files.length) return;
+      const fd = new FormData();
+      for (const f of files) fd.append('files', f);
+      await fetch('/api/upload', { method: 'POST', body: fd });
+      await refreshQBD();
+    }
+
+    // ── Migration ─────────────────────────────────────────────
+    async function startMigration() {
+      const dryRun = document.getElementById('dryRun').checked;
+      const btn = document.getElementById('btnStart');
+      btn.disabled = true;
+      setStatus('Running', 'qb');
+      clearLog();
+      resetPhases();
+      document.getElementById('flowArrow').classList.remove('opacity-0');
+
+      const r = await fetch('/api/migrate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dry_run: dryRun }),
+      });
+      const data = await r.json();
+      if (!data.success) {
+        appendLog('ERROR', data.message);
+        setStatus('Error', 'red');
+        btn.disabled = false;
+        return;
+      }
+
+      eventSource = new EventSource('/api/migrate/stream');
+      eventSource.onmessage = (e) => {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'log') appendLog(msg.level, msg.message);
+        else if (msg.type === 'phase') { markPhase(msg.phase); appendLog('INFO', msg.message); }
+        else if (msg.type === 'complete') {
+          markAllComplete();
+          renderSummary(msg.summary, msg.warnings);
+          setStatus(dryRun ? 'Dry run complete' : 'Complete', 'qb');
+          btn.disabled = false;
+          document.getElementById('flowArrow').classList.add('opacity-0');
+          eventSource.close(); eventSource = null;
+        } else if (msg.type === 'error') {
+          appendLog('ERROR', msg.message);
+          setStatus('Error', 'red');
+          btn.disabled = false;
+          document.getElementById('flowArrow').classList.add('opacity-0');
+          eventSource.close(); eventSource = null;
+        }
+      };
+    }
+
+    // ── UI helpers ────────────────────────────────────────────
+    function setStatus(text, tone) {
+      const badge = document.getElementById('statusBadge');
+      const dot = badge.querySelector('span');
+      document.getElementById('statusText').textContent = text;
+      badge.className = 'px-3 py-1.5 rounded-full text-xs font-semibold flex items-center gap-2';
+      if (tone === 'qb') {
+        badge.classList.add('bg-qb-50', 'text-qb-700');
+        dot.className = 'w-2 h-2 rounded-full bg-qb-500 pulse-dot';
+      } else if (tone === 'red') {
+        badge.classList.add('bg-red-50', 'text-red-700');
+        dot.className = 'w-2 h-2 rounded-full bg-red-500';
+      } else {
+        badge.classList.add('bg-gray-100', 'text-gray-600');
+        dot.className = 'w-2 h-2 rounded-full bg-gray-400';
+      }
+    }
+
+    const PHASES = ['extract', 'transform', 'load', 'validate'];
+    function resetPhases() {
+      document.querySelectorAll('.phase').forEach(el => el.classList.remove('active', 'done'));
+    }
+    function markPhase(phase) {
+      let passed = true;
+      for (const p of PHASES) {
+        const el = document.querySelector(`.phase[data-phase="${p}"]`);
+        if (!el) continue;
+        el.classList.remove('active');
+        if (p === phase) { el.classList.add('active'); passed = false; }
+        else if (passed) el.classList.add('done');
+      }
+    }
+    function markAllComplete() {
+      document.querySelectorAll('.phase').forEach(el => {
+        el.classList.remove('active');
+        el.classList.add('done');
+      });
+    }
+
+    function appendLog(level, message) {
+      const box = document.getElementById('logConsole');
+      const ts = new Date().toLocaleTimeString();
+      const line = document.createElement('div');
+      line.className = `log-line log-${level} fade-in`;
+      line.innerHTML = `<span class="text-gray-500">${ts}</span>  <span class="text-gray-400">${level.padEnd(7)}</span>  <span>${escape(message)}</span>`;
+      box.appendChild(line);
+      box.scrollTop = box.scrollHeight;
+    }
+    function clearLog() {
+      document.getElementById('logConsole').innerHTML = '';
+    }
+    function escape(s) {
+      return (s || '').replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
+    }
+
+    function renderSummary(summary, warnings) {
+      const box = document.getElementById('summaryBox');
+      const counts = summary?.counts || {};
+      if (!Object.keys(counts).length) { box.textContent = 'No entities migrated.'; return; }
+      box.innerHTML = Object.entries(counts).map(([k, v]) => `
+        <div class="flex items-center justify-between py-1 border-b border-gray-100 last:border-0">
+          <span class="text-ink-700 capitalize">${k}</span>
+          <span class="font-mono font-semibold text-qb-700">${v}</span>
+        </div>
+      `).join('');
+
+      const warnBox = document.getElementById('warningsBox');
+      if (!warnings || !warnings.length) {
+        warnBox.innerHTML = '<span class="text-emerald-700">No warnings</span>';
+      } else {
+        warnBox.innerHTML = warnings.slice(0, 8).map(w =>
+          `<div class="text-xs text-amber-800 bg-amber-50 border border-amber-100 rounded px-2 py-1 mb-1">${escape(w)}</div>`
+        ).join('') + (warnings.length > 8 ? `<div class="text-xs text-ink-500">+${warnings.length - 8} more</div>` : '');
+      }
+    }
+
+    // URL param: landed from OAuth callback
+    if (new URLSearchParams(location.search).get('connected')) {
+      setTimeout(() => { history.replaceState({}, '', location.pathname); }, 100);
+    }
+
+    boot();
+  </script>
+</body>
+</html>
