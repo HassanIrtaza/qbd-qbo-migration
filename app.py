@@ -665,6 +665,14 @@ def _run_migration(dry_run: bool):
     qm.log.addHandler(handler)
     qm.log.setLevel(logging.INFO)
 
+    # In Demo Mode the QBO token is a fake string — any real API call will
+    # fail with "invalid_client". Force dry_run so QBOLoader generates fake
+    # IDs instead of hitting Intuit. The UI still animates all phases and
+    # surfaces per-entity counts.
+    if DEMO_MODE and not dry_run:
+        _emit("log", "Demo Mode active — simulating live migration (no real QBO API calls).", level="INFO")
+        dry_run = True
+
     try:
         # ── Phase 1: Extract ──
         _emit("phase", "Phase 1: Extracting from QBD Excel exports...", phase="extract")
