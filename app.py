@@ -224,15 +224,29 @@ _qbd_progress: dict = {"running": False, "entities": {}}
 
 @app.route("/api/qbd/platform")
 def qbd_platform():
-    """Tell the UI whether direct QBD connection is even possible on this host."""
+    """Tell the UI whether direct QBD connection is possible on this host.
+    In DEMO_MODE we simulate a connection even on non-Windows so the flow
+    can be recorded/presented without a real QuickBooks Desktop install."""
+    if IS_WINDOWS:
+        return jsonify({
+            "windows": True,
+            "supported": True,
+            "demo": False,
+            "message": "Direct QBD connection available",
+        })
+    if DEMO_MODE:
+        return jsonify({
+            "windows": False,
+            "supported": True,
+            "demo": True,
+            "message": "Running in Demo Mode — direct-connect is simulated for presentations.",
+        })
     return jsonify({
-        "windows": IS_WINDOWS,
-        "supported": IS_WINDOWS,
-        "message": (
-            "Direct QBD connection available" if IS_WINDOWS
-            else "Direct QBD connection requires Windows + QuickBooks SDK. "
-                 "On this host, use the Upload Files option instead."
-        ),
+        "windows": False,
+        "supported": False,
+        "demo": False,
+        "message": "Direct QBD connection requires Windows + QuickBooks SDK. "
+                   "On this host, use the Upload Files option instead.",
     })
 
 
@@ -259,6 +273,24 @@ def qbd_connect():
             _qbd_state["extractor"].close()
         except Exception:
             pass
+
+    # ── Demo Mode short-circuit ──
+    # Lets the full UI flow (connect → extract → migrate) be recorded or
+    # presented without a real QuickBooks Desktop install.
+    if not IS_WINDOWS and DEMO_MODE:
+        fake_file = company_file or r"C:\Users\Demo\Documents\Sample Construction Co.QBW"
+        _qbd_state.update({
+            "extractor": "demo",
+            "connected": True,
+            "company_file": fake_file,
+            "error": "",
+        })
+        return jsonify({
+            "success": True,
+            "demo": True,
+            "company_file": fake_file,
+            "message": "Connected to QuickBooks Desktop (Demo Mode)",
+        })
 
     info = QBDConnectionInfo(
         app_name="QBD-QBO Migration",
@@ -288,7 +320,7 @@ def qbd_connect():
 @app.route("/api/qbd/disconnect", methods=["POST"])
 def qbd_disconnect():
     ex = _qbd_state.get("extractor")
-    if ex:
+    if ex and ex != "demo":
         try:
             ex.close()
         except Exception:
@@ -337,7 +369,10 @@ def _run_qbd_extract():
 
     try:
         ex = _qbd_state["extractor"]
-        counts = ex.extract_all(EXPORT_DIR, progress=progress)
+        if ex == "demo":
+            counts = _demo_extract_all(progress)
+        else:
+            counts = ex.extract_all(EXPORT_DIR, progress=progress)
         _emit(
             "qbd-complete",
             f"Extracted {sum(c for c in counts.values() if c >= 0)} total rows across "
@@ -350,6 +385,158 @@ def _run_qbd_extract():
     finally:
         _qbd_progress["running"] = False
         qbd_log.removeHandler(handler)
+
+
+def _demo_extract_all(progress) -> dict[str, int]:
+    """Simulate a realistic QBXMLRP2 extraction for presentations.
+
+    Paces output with small delays so the log console shows something
+    satisfying on camera, and writes genuine Excel files to qbd_exports/
+    so the downstream migration step is fully functional.
+    """
+    import pandas as pd
+
+    # Realistic-looking construction contractor sample data
+    datasets: list[tuple[str, str, pd.DataFrame, float]] = [
+        ("accounts", "QBD_ChartOfAccounts.xlsx", pd.DataFrame([
+            {"Account": "Wells Fargo Checking", "Type": "Bank", "Balance": 128450.32},
+            {"Account": "Chase Savings", "Type": "Bank", "Balance": 50000.00},
+            {"Account": "Accounts Receivable", "Type": "Accounts Receivable", "Balance": 87320.15},
+            {"Account": "Inventory Asset", "Type": "Other Current Asset", "Balance": 24150.00},
+            {"Account": "Trucks & Equipment", "Type": "Fixed Asset", "Balance": 185000.00},
+            {"Account": "Accounts Payable", "Type": "Accounts Payable", "Balance": 42180.55},
+            {"Account": "AmEx Business", "Type": "Credit Card", "Balance": 6821.12},
+            {"Account": "Construction Loan", "Type": "Long Term Liability", "Balance": 120000.00},
+            {"Account": "Opening Balance Equity", "Type": "Equity", "Balance": 0},
+            {"Account": "Retained Earnings", "Type": "Equity", "Balance": 206538.80},
+            {"Account": "Construction Income", "Type": "Income", "Balance": 0},
+            {"Account": "Service Income", "Type": "Income", "Balance": 0},
+            {"Account": "Job Materials", "Type": "Cost of Goods Sold", "Balance": 0},
+            {"Account": "Subcontractors", "Type": "Cost of Goods Sold", "Balance": 0},
+            {"Account": "Office Supplies", "Type": "Expense", "Balance": 0},
+            {"Account": "Vehicle Expense", "Type": "Expense", "Balance": 0},
+            {"Account": "Insurance", "Type": "Expense", "Balance": 0},
+        ]), 0.8),
+
+        ("customers", "QBD_Customers.xlsx", pd.DataFrame([
+            {"Name": "Anderson Residences", "Company Name": "Anderson Family LLC",
+             "Main Email": "bill@anderson.com", "Main Phone": "555-0140", "Terms": "Net 30"},
+            {"Name": "Anderson Residences:Kitchen Remodel", "Job Status": "In Progress"},
+            {"Name": "Anderson Residences:Bathroom Renovation", "Job Status": "Awarded"},
+            {"Name": "Bayside Commercial", "Company Name": "Bayside Properties Inc",
+             "Main Email": "ap@bayside.com", "Main Phone": "555-0212", "Terms": "Net 15"},
+            {"Name": "Bayside Commercial:Office Buildout", "Job Status": "In Progress"},
+            {"Name": "Carlson & Sons", "Company Name": "Carlson Development",
+             "Main Email": "jim@carlson.com", "Main Phone": "555-0167", "Terms": "Net 30"},
+            {"Name": "Carlson & Sons:Warehouse Expansion", "Job Status": "Closed"},
+            {"Name": "Diamond Property Group", "Company Name": "Diamond Holdings LLC",
+             "Main Email": "billing@diamondpg.com", "Main Phone": "555-0198", "Terms": "Net 30"},
+            {"Name": "Eastside Medical", "Company Name": "Eastside Medical Center",
+             "Main Email": "finance@eastsidemed.com", "Main Phone": "555-0321", "Terms": "Net 45"},
+            {"Name": "Eastside Medical:Urgent Care Addition", "Job Status": "In Progress"},
+            {"Name": "Fairview Apartments", "Company Name": "Fairview Housing",
+             "Main Email": "manager@fairview.com", "Main Phone": "555-0278", "Terms": "Net 30"},
+            {"Name": "Greenway Schools", "Company Name": "Greenway School District",
+             "Main Email": "facilities@greenway.edu", "Main Phone": "555-0354", "Terms": "Net 45"},
+        ]), 1.2),
+
+        ("vendors", "QBD_Vendors.xlsx", pd.DataFrame([
+            {"Name": "Home Depot Pro", "Company Name": "Home Depot USA Inc", "1099": "No",
+             "Main Email": "", "Main Phone": "800-430-3376"},
+            {"Name": "Lowes Commercial", "Company Name": "Lowe's Companies Inc", "1099": "No",
+             "Main Phone": "800-445-6937"},
+            {"Name": "ABC Supply Co", "Company Name": "ABC Supply Co., Inc.", "1099": "No"},
+            {"Name": "Ferguson Plumbing", "Company Name": "Ferguson Enterprises", "1099": "No"},
+            {"Name": "Mike's Electric LLC", "1099": "Yes", "Main Email": "mike@mikeselectric.com"},
+            {"Name": "Quality Roofing Inc", "Company Name": "Quality Roofing", "1099": "No"},
+            {"Name": "Joe Martinez Drywall", "1099": "Yes", "Main Phone": "555-0412"},
+            {"Name": "Sunshine HVAC", "Company Name": "Sunshine Heating & Air", "1099": "No"},
+            {"Name": "Pacific Concrete", "Company Name": "Pacific Concrete Co", "1099": "No"},
+        ]), 1.0),
+
+        ("items", "QBD_Items.xlsx", pd.DataFrame([
+            {"Item": "Labor - Foreman", "Type": "Service", "Price": 95.00},
+            {"Item": "Labor - Carpenter", "Type": "Service", "Price": 75.00},
+            {"Item": "Labor - Helper", "Type": "Service", "Price": 45.00},
+            {"Item": "Project Management", "Type": "Service", "Price": 125.00},
+            {"Item": "2x4x8 Stud", "Type": "Non-inventory Part", "Price": 4.25},
+            {"Item": "4x8 OSB Sheathing", "Type": "Inventory Part", "Price": 32.00},
+            {"Item": "Drywall 4x8", "Type": "Inventory Part", "Price": 14.50},
+            {"Item": "Electrical Wire 12/2", "Type": "Non-inventory Part", "Price": 0.85},
+        ]), 0.9),
+
+        ("employees", "QBD_Employees.xlsx", pd.DataFrame([
+            {"Name": "John Smith", "SSN": "XXX-XX-4832", "Email": "john@company.com"},
+            {"Name": "Maria Garcia", "SSN": "XXX-XX-7291", "Email": "maria@company.com"},
+            {"Name": "David Chen", "SSN": "XXX-XX-1104", "Email": "david@company.com"},
+            {"Name": "Sarah Johnson", "SSN": "XXX-XX-9876", "Email": "sarah@company.com"},
+        ]), 0.8),
+
+        ("open_invoices", "QBD_OpenInvoices.xlsx", pd.DataFrame([
+            {"Customer": "Anderson Residences", "Num": "INV-2034", "Amount": 12500.00, "Date": "2026-03-15"},
+            {"Customer": "Anderson Residences:Kitchen Remodel", "Num": "INV-2041", "Amount": 8750.00, "Date": "2026-03-28"},
+            {"Customer": "Bayside Commercial", "Num": "INV-2042", "Amount": 34200.00, "Date": "2026-04-01"},
+            {"Customer": "Bayside Commercial:Office Buildout", "Num": "INV-2048", "Amount": 18500.00, "Date": "2026-04-10"},
+            {"Customer": "Eastside Medical", "Num": "INV-2051", "Amount": 9370.15, "Date": "2026-04-15"},
+            {"Customer": "Fairview Apartments", "Num": "INV-2053", "Amount": 4000.00, "Date": "2026-04-18"},
+        ]), 1.0),
+
+        ("open_bills", "QBD_OpenBills.xlsx", pd.DataFrame([
+            {"Vendor": "Home Depot Pro", "Ref Number": "HD-44820", "Open Balance": 3421.55, "Date": "2026-03-22"},
+            {"Vendor": "ABC Supply Co", "Ref Number": "ABC-8812", "Open Balance": 8950.00, "Date": "2026-04-02"},
+            {"Vendor": "Mike's Electric LLC", "Ref Number": "ME-1208", "Open Balance": 12400.00, "Date": "2026-04-05"},
+            {"Vendor": "Joe Martinez Drywall", "Ref Number": "JM-0921", "Open Balance": 5850.00, "Date": "2026-04-08"},
+            {"Vendor": "Ferguson Plumbing", "Ref Number": "FP-3314", "Open Balance": 2780.00, "Date": "2026-04-12"},
+            {"Vendor": "Pacific Concrete", "Ref Number": "PC-7755", "Open Balance": 8779.00, "Date": "2026-04-14"},
+        ]), 0.9),
+
+        ("trial_balance", "QBD_TrialBalance.xlsx", pd.DataFrame([
+            {"Account": "Wells Fargo Checking", "Debit": 128450.32, "Credit": 0},
+            {"Account": "Chase Savings", "Debit": 50000.00, "Credit": 0},
+            {"Account": "Accounts Receivable", "Debit": 87320.15, "Credit": 0},
+            {"Account": "Inventory Asset", "Debit": 24150.00, "Credit": 0},
+            {"Account": "Trucks & Equipment", "Debit": 185000.00, "Credit": 0},
+            {"Account": "Accounts Payable", "Debit": 0, "Credit": 42180.55},
+            {"Account": "AmEx Business", "Debit": 0, "Credit": 6821.12},
+            {"Account": "Construction Loan", "Debit": 0, "Credit": 120000.00},
+            {"Account": "Retained Earnings", "Debit": 0, "Credit": 306918.80},
+        ]), 0.7),
+    ]
+
+    counts: dict[str, int] = {}
+
+    # Phase 1: QBXMLRP2 handshake (pure cosmetic, but sells the video)
+    _emit("log", "Opening QBXMLRP2 session...", level="INFO")
+    time.sleep(0.6)
+    _emit("log", "→ OpenConnection2 (AppName='QBD-QBO Migration', Mode=1)", level="INFO")
+    time.sleep(0.5)
+    _emit("log", "→ BeginSession (company=Sample Construction Co.QBW)", level="INFO")
+    time.sleep(0.7)
+    _emit("log", "✓ Session ticket acquired", level="INFO")
+    time.sleep(0.4)
+
+    # Phase 2: walk entities with realistic pacing
+    for name, filename, df, pause in datasets:
+        progress(name, "running")
+        _emit("log", f"Querying {name}Query (QBXML v16.0)...", level="INFO")
+        time.sleep(pause * 0.4)
+
+        path = EXPORT_DIR / filename
+        df.to_excel(path, index=False)
+
+        _emit("log", f"  Parsing {len(df)} {name} records from QBXML response", level="INFO")
+        time.sleep(pause * 0.4)
+        _emit("log", f"  Wrote {path.name}  ({len(df)} rows)", level="INFO")
+
+        counts[name] = len(df)
+        progress(name, f"done:{len(df)}")
+        time.sleep(pause * 0.3)
+
+    # Phase 3: close cleanly
+    _emit("log", "Closing QBXMLRP2 session (EndSession, CloseConnection)", level="INFO")
+    time.sleep(0.5)
+
+    return counts
 
 
 @app.route("/api/generate-sample", methods=["POST"])

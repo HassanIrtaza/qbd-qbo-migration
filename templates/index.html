@@ -136,7 +136,7 @@
               <label class="block text-xs font-semibold text-ink-500 uppercase tracking-wide">
                 Company file <span class="normal-case text-ink-500 lowercase">(optional — leave blank to use the currently-open file)</span>
               </label>
-              <input id="qbdCompanyPath" type="text" placeholder="C:\\Users\\...\\Company.QBW"
+              <input id="qbdCompanyPath" type="text" placeholder="C:\Users\Public\Documents\Intuit\QuickBooks\Company Files\Sample Construction Co.QBW"
                 class="w-full px-3 py-2 text-sm mono border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent">
               <button onclick="qbdConnect()" id="btnQbdConnect"
                 class="w-full px-3.5 py-2.5 bg-emerald-600 text-white text-sm font-semibold rounded-lg hover:bg-emerald-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition shadow-sm">
@@ -359,15 +359,23 @@
       const unsupportedMsg = document.getElementById('qbdUnsupported');
       const connectBtn = document.getElementById('btnQbdConnect');
       const statusEl = document.getElementById('qbdDirectStatus');
-      if (!p.supported) {
+
+      if (p.demo) {
+        // Demo Mode: everything works, but label it so the customer knows
+        statusEl.innerHTML = '<span class="text-emerald-700 font-medium">● Ready to connect</span> <span class="text-ink-500">· Demo Mode</span>';
+        unsupportedMsg.classList.add('hidden');
+        connectBtn.disabled = false;
+        connectBtn.textContent = 'Connect to QuickBooks Desktop';
+      } else if (p.supported) {
+        statusEl.innerHTML = '<span class="text-emerald-700 font-medium">● QuickBooks SDK detected</span>';
+        unsupportedMsg.classList.add('hidden');
+        connectBtn.disabled = false;
+      } else {
         unsupportedMsg.classList.remove('hidden');
         connectBtn.disabled = true;
         connectBtn.textContent = 'Not available on this host';
         statusEl.innerHTML = '<span class="text-amber-700">Windows + QuickBooks SDK required for direct connect.</span>';
-        // auto-switch to file mode on non-Windows
         setQbdMode('files');
-      } else {
-        statusEl.textContent = p.message;
       }
     }
 
