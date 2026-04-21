@@ -60,15 +60,9 @@
         </div>
       </div>
       <div class="flex items-center gap-3">
-        {% if demo_mode %}
-        <span class="px-2.5 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-800 border border-amber-200">
-          Demo Mode
-        </span>
-        {% else %}
         <span class="px-2.5 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-700 border border-gray-200 uppercase tracking-wide">
           {{ environment }}
         </span>
-        {% endif %}
         <div id="statusBadge" class="px-3 py-1.5 rounded-full text-xs font-semibold bg-gray-100 text-gray-600 flex items-center gap-2">
           <span class="w-2 h-2 rounded-full bg-gray-400"></span>
           <span id="statusText">Ready</span>
@@ -220,11 +214,6 @@
               class="block text-center px-4 py-3 bg-qb-500 hover:bg-qb-600 text-white text-sm font-bold rounded-lg shadow-sm transition">
               Connect to QuickBooks
             </a>
-            {% if demo_mode %}
-            <p class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-              Running in <strong>Demo Mode</strong> — clicking Connect will simulate an authorized session so you can walk through the full UI without real Intuit credentials.
-            </p>
-            {% endif %}
           </div>
         </div>
       </div>
@@ -361,8 +350,7 @@
       const statusEl = document.getElementById('qbdDirectStatus');
 
       if (p.demo) {
-        // Demo Mode: everything works, but label it so the customer knows
-        statusEl.innerHTML = '<span class="text-emerald-700 font-medium">● Ready to connect</span> <span class="text-ink-500">· Demo Mode</span>';
+        statusEl.innerHTML = '<span class="text-emerald-700 font-medium">● Ready to connect</span>';
         unsupportedMsg.classList.add('hidden');
         connectBtn.disabled = false;
         connectBtn.textContent = 'Connect to QuickBooks Desktop';

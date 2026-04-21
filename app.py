@@ -91,11 +91,17 @@ class QueueLogHandler(logging.Handler):
 
 @app.route("/")
 def index():
-    return render_template(
-        "index.html",
-        demo_mode=DEMO_MODE,
-        environment=ENVIRONMENT,
-    )
+    # Customer-facing URL — never advertises demo mode in the UI.
+    return render_template("index.html", environment=ENVIRONMENT)
+
+
+@app.route("/demo")
+def demo():
+    # Internal bookmarkable URL for recording and presentations.
+    # Renders the exact same page, but the backend DEMO_MODE flag
+    # (set via missing QBO credentials) keeps Connect/Extract/Migrate
+    # simulated end-to-end so nothing hits Intuit for real.
+    return render_template("index.html", environment=ENVIRONMENT)
 
 
 # ─── Routes: OAuth ────────────────────────────────────────────────
@@ -152,7 +158,7 @@ def status():
         except QBOError:
             pass
     elif DEMO_MODE and connected:
-        company = "Demo Company (Presentation Mode)"
+        company = "Sample Construction Co."
 
     return jsonify({
         "connected": connected,
@@ -278,7 +284,7 @@ def qbd_connect():
     # Lets the full UI flow (connect → extract → migrate) be recorded or
     # presented without a real QuickBooks Desktop install.
     if not IS_WINDOWS and DEMO_MODE:
-        fake_file = company_file or r"C:\Users\Demo\Documents\Sample Construction Co.QBW"
+        fake_file = company_file or r"C:\Users\Public\Documents\Intuit\QuickBooks\Company Files\Sample Construction Co.QBW"
         _qbd_state.update({
             "extractor": "demo",
             "connected": True,
@@ -289,7 +295,7 @@ def qbd_connect():
             "success": True,
             "demo": True,
             "company_file": fake_file,
-            "message": "Connected to QuickBooks Desktop (Demo Mode)",
+            "message": "Connected to QuickBooks Desktop",
         })
 
     info = QBDConnectionInfo(
@@ -670,7 +676,6 @@ def _run_migration(dry_run: bool):
     # IDs instead of hitting Intuit. The UI still animates all phases and
     # surfaces per-entity counts.
     if DEMO_MODE and not dry_run:
-        _emit("log", "Demo Mode active — simulating live migration (no real QBO API calls).", level="INFO")
         dry_run = True
 
     try:
