@@ -97,23 +97,77 @@
           </div>
         </div>
         <div class="p-5 space-y-4">
-          <div id="qbdSummary" class="flex items-baseline justify-between">
-            <div>
-              <div id="qbdFound" class="text-3xl font-bold text-ink-900">0</div>
-              <div class="text-xs text-ink-500">of 8 files ready</div>
-            </div>
-            <div id="qbdProgress" class="text-xs text-emerald-700 font-medium">Checking...</div>
+          <!-- Source mode tabs -->
+          <div class="flex gap-1 bg-gray-100 rounded-lg p-1 text-xs font-semibold">
+            <button onclick="setQbdMode('direct')" id="tabDirect"
+              class="flex-1 px-3 py-1.5 rounded-md transition">Connect to QBD</button>
+            <button onclick="setQbdMode('files')" id="tabFiles"
+              class="flex-1 px-3 py-1.5 rounded-md transition">Upload Files</button>
           </div>
-          <div id="qbdFileList" class="space-y-1 max-h-40 overflow-y-auto text-sm"></div>
-          <div class="flex gap-2 pt-1">
-            <button onclick="generateSample()" id="btnGenSample"
-              class="flex-1 px-3.5 py-2.5 bg-emerald-600 text-white text-sm font-semibold rounded-lg hover:bg-emerald-700 transition shadow-sm">
-              Generate Sample
-            </button>
-            <label class="flex-1 px-3.5 py-2.5 bg-white border border-gray-300 text-ink-700 text-sm font-semibold rounded-lg hover:bg-gray-50 transition cursor-pointer text-center">
-              Upload Files
-              <input type="file" multiple accept=".xlsx" class="hidden" onchange="uploadFiles(this.files)">
-            </label>
+
+          <!-- Direct QBD connection pane -->
+          <div id="qbdDirectPane" class="space-y-3">
+            <div id="qbdDirectStatus" class="text-sm text-ink-500">Checking QBD availability...</div>
+
+            <div id="qbdConnectedBlock" class="hidden space-y-2 fade-in">
+              <div class="flex items-center gap-2 text-sm">
+                <span class="w-2 h-2 rounded-full bg-emerald-500 pulse-dot"></span>
+                <span class="text-ink-700 font-medium">Connected to QuickBooks Desktop</span>
+              </div>
+              <div class="text-sm">
+                <div class="text-ink-500">Company file</div>
+                <div id="qbdCompanyFile" class="mono text-ink-700 text-xs truncate">—</div>
+              </div>
+              <div class="flex gap-2 pt-1">
+                <button onclick="extractFromQBD()" id="btnExtract"
+                  class="flex-1 px-3.5 py-2.5 bg-emerald-600 text-white text-sm font-semibold rounded-lg hover:bg-emerald-700 transition shadow-sm flex items-center justify-center gap-2">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3"/>
+                  </svg>
+                  Extract Now
+                </button>
+                <button onclick="qbdDisconnect()" class="px-3.5 py-2.5 bg-white border border-gray-300 text-ink-700 text-sm font-medium rounded-lg hover:bg-gray-50">
+                  Disconnect
+                </button>
+              </div>
+            </div>
+
+            <div id="qbdDisconnectedBlock" class="space-y-3">
+              <label class="block text-xs font-semibold text-ink-500 uppercase tracking-wide">
+                Company file <span class="normal-case text-ink-500 lowercase">(optional — leave blank to use the currently-open file)</span>
+              </label>
+              <input id="qbdCompanyPath" type="text" placeholder="C:\\Users\\...\\Company.QBW"
+                class="w-full px-3 py-2 text-sm mono border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent">
+              <button onclick="qbdConnect()" id="btnQbdConnect"
+                class="w-full px-3.5 py-2.5 bg-emerald-600 text-white text-sm font-semibold rounded-lg hover:bg-emerald-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition shadow-sm">
+                Connect to QuickBooks Desktop
+              </button>
+              <p id="qbdUnsupported" class="hidden text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                Direct QBD connection requires Windows and the QuickBooks SDK. On this machine, switch to <strong>Upload Files</strong> and export Excel from QBD.
+              </p>
+            </div>
+          </div>
+
+          <!-- File upload pane -->
+          <div id="qbdFilesPane" class="hidden space-y-4">
+            <div class="flex items-baseline justify-between">
+              <div>
+                <div id="qbdFound" class="text-3xl font-bold text-ink-900">0</div>
+                <div class="text-xs text-ink-500">of 8 files ready</div>
+              </div>
+              <div id="qbdProgress" class="text-xs text-emerald-700 font-medium">Checking...</div>
+            </div>
+            <div id="qbdFileList" class="space-y-1 max-h-40 overflow-y-auto text-sm"></div>
+            <div class="flex gap-2 pt-1">
+              <button onclick="generateSample()" id="btnGenSample"
+                class="flex-1 px-3.5 py-2.5 bg-emerald-600 text-white text-sm font-semibold rounded-lg hover:bg-emerald-700 transition shadow-sm">
+                Generate Sample
+              </button>
+              <label class="flex-1 px-3.5 py-2.5 bg-white border border-gray-300 text-ink-700 text-sm font-semibold rounded-lg hover:bg-gray-50 transition cursor-pointer text-center">
+                Upload Files
+                <input type="file" multiple accept=".xlsx" class="hidden" onchange="uploadFiles(this.files)">
+              </label>
+            </div>
           </div>
         </div>
       </div>
@@ -272,9 +326,134 @@
 
     // ── Boot ──────────────────────────────────────────────────
     async function boot() {
-      await Promise.all([refreshQBD(), refreshStatus()]);
+      setQbdMode('direct');  // default to direct; auto-fallback if unsupported
+      await Promise.all([refreshQBD(), refreshStatus(), refreshQbdPlatform(), refreshQbdStatus()]);
       // Auto-refresh files every 5s while idle
       setInterval(() => { if (!eventSource) refreshQBD(); }, 5000);
+    }
+
+    // ── QBD source mode ───────────────────────────────────────
+    function setQbdMode(mode) {
+      const direct = document.getElementById('qbdDirectPane');
+      const files = document.getElementById('qbdFilesPane');
+      const tabD = document.getElementById('tabDirect');
+      const tabF = document.getElementById('tabFiles');
+      if (mode === 'direct') {
+        direct.classList.remove('hidden'); files.classList.add('hidden');
+        tabD.classList.add('bg-white', 'shadow-sm', 'text-ink-900');
+        tabD.classList.remove('text-ink-500');
+        tabF.classList.remove('bg-white', 'shadow-sm', 'text-ink-900');
+        tabF.classList.add('text-ink-500');
+      } else {
+        files.classList.remove('hidden'); direct.classList.add('hidden');
+        tabF.classList.add('bg-white', 'shadow-sm', 'text-ink-900');
+        tabF.classList.remove('text-ink-500');
+        tabD.classList.remove('bg-white', 'shadow-sm', 'text-ink-900');
+        tabD.classList.add('text-ink-500');
+      }
+    }
+
+    async function refreshQbdPlatform() {
+      const r = await fetch('/api/qbd/platform');
+      const p = await r.json();
+      const unsupportedMsg = document.getElementById('qbdUnsupported');
+      const connectBtn = document.getElementById('btnQbdConnect');
+      const statusEl = document.getElementById('qbdDirectStatus');
+      if (!p.supported) {
+        unsupportedMsg.classList.remove('hidden');
+        connectBtn.disabled = true;
+        connectBtn.textContent = 'Not available on this host';
+        statusEl.innerHTML = '<span class="text-amber-700">Windows + QuickBooks SDK required for direct connect.</span>';
+        // auto-switch to file mode on non-Windows
+        setQbdMode('files');
+      } else {
+        statusEl.textContent = p.message;
+      }
+    }
+
+    async function refreshQbdStatus() {
+      const r = await fetch('/api/qbd/status');
+      const s = await r.json();
+      const connected = document.getElementById('qbdConnectedBlock');
+      const disconnected = document.getElementById('qbdDisconnectedBlock');
+      if (s.connected) {
+        connected.classList.remove('hidden');
+        disconnected.classList.add('hidden');
+        document.getElementById('qbdCompanyFile').textContent = s.company_file || '(currently open)';
+      } else {
+        connected.classList.add('hidden');
+        disconnected.classList.remove('hidden');
+      }
+    }
+
+    async function qbdConnect() {
+      const btn = document.getElementById('btnQbdConnect');
+      const path = document.getElementById('qbdCompanyPath').value.trim();
+      btn.disabled = true;
+      const prev = btn.textContent;
+      btn.innerHTML = '<span class="spinner"></span> Connecting...';
+      try {
+        const r = await fetch('/api/qbd/connect', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ company_file: path }),
+        });
+        const data = await r.json();
+        if (!data.success) {
+          alert(data.message || 'Connection failed');
+        }
+      } catch (e) {
+        alert('Connection failed: ' + e);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = prev;
+        await refreshQbdStatus();
+      }
+    }
+
+    async function qbdDisconnect() {
+      await fetch('/api/qbd/disconnect', { method: 'POST' });
+      await refreshQbdStatus();
+    }
+
+    async function extractFromQBD() {
+      const btn = document.getElementById('btnExtract');
+      btn.disabled = true;
+      setStatus('Extracting', 'qb');
+      clearLog();
+      document.getElementById('flowArrow').classList.remove('opacity-0');
+
+      const r = await fetch('/api/qbd/extract', { method: 'POST' });
+      const data = await r.json();
+      if (!data.success) {
+        appendLog('ERROR', data.message);
+        setStatus('Error', 'red');
+        btn.disabled = false;
+        return;
+      }
+
+      // Reuse the same SSE bus
+      if (eventSource) eventSource.close();
+      eventSource = new EventSource('/api/migrate/stream');
+      eventSource.onmessage = (e) => {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'log') appendLog(msg.level, msg.message);
+        else if (msg.type === 'phase' || msg.type === 'qbd-progress') appendLog('INFO', msg.message);
+        else if (msg.type === 'qbd-complete') {
+          appendLog('INFO', msg.message);
+          setStatus('Extraction complete', 'qb');
+          btn.disabled = false;
+          document.getElementById('flowArrow').classList.add('opacity-0');
+          eventSource.close(); eventSource = null;
+          refreshQBD();
+        } else if (msg.type === 'error') {
+          appendLog('ERROR', msg.message);
+          setStatus('Error', 'red');
+          btn.disabled = false;
+          document.getElementById('flowArrow').classList.add('opacity-0');
+          eventSource.close(); eventSource = null;
+        }
+      };
     }
 
     // ── Status ────────────────────────────────────────────────

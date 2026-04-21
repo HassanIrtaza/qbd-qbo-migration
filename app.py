@@ -39,6 +39,7 @@ except ImportError:
     pass
 
 from qbo_client import QBOClient, QBOError
+from qbd_extractor import QBDExtractor, QBDConnectionInfo, QBDUnavailable, IS_WINDOWS
 import qbo_migration as qm
 
 # ─── Config ──────────────────────────────────────────────────────
@@ -205,6 +206,150 @@ def upload():
             uploaded.append(f.filename)
     return jsonify({"success": True, "files": uploaded,
                     "message": f"Uploaded {len(uploaded)} file(s)"})
+
+
+# ─── Routes: direct QBD connection ───────────────────────────────
+
+# Module-level state for the QBD session (singleton — one company open at a time)
+_qbd_state: dict = {
+    "extractor": None,
+    "connected": False,
+    "company_file": "",
+    "error": "",
+}
+
+# Extraction progress, streamed back over the same SSE bus as migrations
+_qbd_progress: dict = {"running": False, "entities": {}}
+
+
+@app.route("/api/qbd/platform")
+def qbd_platform():
+    """Tell the UI whether direct QBD connection is even possible on this host."""
+    return jsonify({
+        "windows": IS_WINDOWS,
+        "supported": IS_WINDOWS,
+        "message": (
+            "Direct QBD connection available" if IS_WINDOWS
+            else "Direct QBD connection requires Windows + QuickBooks SDK. "
+                 "On this host, use the Upload Files option instead."
+        ),
+    })
+
+
+@app.route("/api/qbd/status")
+def qbd_status():
+    return jsonify({
+        "connected": _qbd_state["connected"],
+        "company_file": _qbd_state["company_file"],
+        "windows": IS_WINDOWS,
+        "error": _qbd_state["error"],
+    })
+
+
+@app.route("/api/qbd/connect", methods=["POST"])
+def qbd_connect():
+    """Open a QBXMLRP2 session to the currently-open QBD company file
+    (or to a file path if provided)."""
+    data = request.get_json(silent=True) or {}
+    company_file = (data.get("company_file") or "").strip()
+
+    # Close any stale session first
+    if _qbd_state["extractor"]:
+        try:
+            _qbd_state["extractor"].close()
+        except Exception:
+            pass
+
+    info = QBDConnectionInfo(
+        app_name="QBD-QBO Migration",
+        app_id="",
+        company_file=company_file,
+        connection_mode=1,
+    )
+    ex = QBDExtractor(info)
+    try:
+        meta = ex.open()
+        _qbd_state.update({
+            "extractor": ex,
+            "connected": True,
+            "company_file": meta.get("company_file", ""),
+            "error": "",
+        })
+        return jsonify({"success": True, **meta})
+    except QBDUnavailable as e:
+        _qbd_state.update({"extractor": None, "connected": False, "error": str(e)})
+        return jsonify({"success": False, "message": str(e), "windows": IS_WINDOWS}), 400
+    except Exception as e:
+        log.exception("QBD connect failed")
+        _qbd_state.update({"extractor": None, "connected": False, "error": str(e)})
+        return jsonify({"success": False, "message": str(e)}), 500
+
+
+@app.route("/api/qbd/disconnect", methods=["POST"])
+def qbd_disconnect():
+    ex = _qbd_state.get("extractor")
+    if ex:
+        try:
+            ex.close()
+        except Exception:
+            pass
+    _qbd_state.update({"extractor": None, "connected": False, "company_file": "", "error": ""})
+    return jsonify({"success": True})
+
+
+@app.route("/api/qbd/extract", methods=["POST"])
+def qbd_extract():
+    """Stream the full extraction to Excel files in qbd_exports/.
+    Progress is pushed into the same log_queue the migration uses, so the
+    existing log console in the UI shows it in real time."""
+    if _qbd_progress["running"]:
+        return jsonify({"success": False, "message": "Extraction already running"}), 409
+    if not _qbd_state["connected"] or not _qbd_state["extractor"]:
+        return jsonify({"success": False, "message": "Connect to QBD first"}), 400
+
+    t = threading.Thread(target=_run_qbd_extract, daemon=True)
+    t.start()
+    return jsonify({"success": True})
+
+
+def _run_qbd_extract():
+    _qbd_progress["running"] = True
+    _qbd_progress["entities"] = {}
+
+    # Drain queue so the console starts clean
+    while not log_queue.empty():
+        try:
+            log_queue.get_nowait()
+        except queue.Empty:
+            break
+
+    handler = QueueLogHandler()
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    from qbd_extractor import log as qbd_log
+    qbd_log.addHandler(handler)
+    qbd_log.setLevel(logging.INFO)
+
+    _emit("phase", "Extracting directly from QuickBooks Desktop...", phase="qbd-extract")
+
+    def progress(name: str, status: str):
+        _qbd_progress["entities"][name] = status
+        _emit("qbd-progress", f"{name}: {status}", name=name, status=status)
+
+    try:
+        ex = _qbd_state["extractor"]
+        counts = ex.extract_all(EXPORT_DIR, progress=progress)
+        _emit(
+            "qbd-complete",
+            f"Extracted {sum(c for c in counts.values() if c >= 0)} total rows across "
+            f"{sum(1 for c in counts.values() if c >= 0)} entities.",
+            counts=counts,
+        )
+    except Exception as e:
+        log.exception("QBD extraction failed")
+        _emit("error", f"QBD extraction failed: {e}")
+    finally:
+        _qbd_progress["running"] = False
+        qbd_log.removeHandler(handler)
 
 
 @app.route("/api/generate-sample", methods=["POST"])

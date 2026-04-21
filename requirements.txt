@@ -3,3 +3,8 @@ pandas>=2.0.0
 openpyxl>=3.1.0
 requests>=2.31.0
 python-dotenv>=1.0.0
+
+# Direct QuickBooks Desktop connection — Windows only.
+# The app runs fine without this on macOS/Linux; the "Connect to QBD" tab
+# will auto-disable and direct users to the Upload Files flow instead.
+pywin32>=306; sys_platform == "win32"

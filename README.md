@@ -23,8 +23,10 @@ QuickBooks Desktop  ──►  Migration Agent  ──►  QuickBooks Online
 
 The web UI has three panels:
 
-1. **Source** — upload QBD Excel exports or generate sample data
-2. **Target** — Connect to QuickBooks (OAuth 2.0, Sandbox or Production)
+1. **Source** — two modes:
+   - **Connect to QBD** (Windows only) — opens a live QBXMLRP2 COM session against the running QuickBooks Desktop company and pulls data directly
+   - **Upload Files** — drop in Excel exports or generate sample data (works on any OS)
+2. **Target** — Connect to QuickBooks Online (OAuth 2.0, Sandbox or Production)
 3. **Run** — dry-run validation, then live migration with streaming logs
 
 ## Quick Start
@@ -54,9 +56,23 @@ python app.py
 
 Click **Connect to QuickBooks** → authorize your sandbox company → upload QBD Excel files → **Dry Run** → **Start Migration**.
 
-## QBD Export Format
+## Direct QBD Connection (Windows)
 
-The app expects Excel files in `qbd_exports/`:
+On a Windows machine with QuickBooks Desktop installed:
+
+1. Open your company file in QuickBooks Desktop (any edition 2019+)
+2. Leave QBD running in the background
+3. Start this app: `python app.py`
+4. In the Source card, click **Connect to QuickBooks Desktop**
+5. Accept the permission prompt that pops up in QBD (the first time, tick "Yes, always allow this application to access this company file")
+6. Click **Extract Now** — the app pulls Accounts, Customers, Jobs, Vendors, Items, Employees, Open Invoices, Open Bills, and Trial Balance via the QBXMLRP2 SDK and writes them into `qbd_exports/`
+7. Click **Start Migration** to push the extracted data up to QBO
+
+Requires `pip install pywin32` (installed automatically on Windows via `requirements.txt`).
+
+## QBD Export Format (Upload Mode)
+
+If you can't run the app on the same machine as QBD, export Excel files from QBD and upload them. Expected files in `qbd_exports/`:
 
 | File | Source in QBD |
 |---|---|
