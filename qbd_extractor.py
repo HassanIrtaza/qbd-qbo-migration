@@ -77,24 +77,41 @@ class QBDExtractor:
         self.info = info or QBDConnectionInfo()
         self._rp = None           # QBXMLRP2.RequestProcessor
         self._ticket: str | None = None
+        self._co_initialized = False
         if not IS_WINDOWS:
             log.info("QBD direct extractor instantiated on non-Windows — open() will raise.")
 
     # ── Connection lifecycle ──────────────────────────────────
 
     def open(self) -> dict:
-        """Open a QBXMLRP2 session. Returns a small metadata dict on success."""
+        """Open a QBXMLRP2 session. Returns a small metadata dict on success.
+
+        IMPORTANT: QBXMLRP2 is an STA COM object. It must be opened, used, and
+        closed on the *same* thread. Call this inside whichever thread will do
+        the extraction — do not open on one thread and call extract_* from
+        another, or the process will crash (RPC_E_WRONG_THREAD).
+        """
         if not IS_WINDOWS:
             raise QBDUnavailable(
                 "QuickBooks Desktop direct connection requires Windows and the QB SDK. "
                 "On macOS/Linux, export Excel files from QBD and use the Upload option."
             )
         try:
+            import pythoncom  # type: ignore
             import win32com.client  # type: ignore
         except ImportError as e:
             raise QBDUnavailable(
                 f"pywin32 is not installed: {e}. Run: pip install pywin32"
             )
+
+        # Initialize COM for this thread. If it's already initialized (e.g.
+        # the main thread), CoInitialize returns S_FALSE — still safe.
+        try:
+            pythoncom.CoInitialize()
+            self._co_initialized = True
+        except Exception as e:
+            log.warning("CoInitialize returned: %s", e)
+            self._co_initialized = False
 
         try:
             self._rp = win32com.client.Dispatch("QBXMLRP2.RequestProcessor")
@@ -126,6 +143,14 @@ class QBDExtractor:
             log.warning("CloseConnection failed: %s", e)
         self._rp = None
         self._ticket = None
+        # Balance CoInitialize with CoUninitialize on the same thread
+        if getattr(self, "_co_initialized", False):
+            try:
+                import pythoncom  # type: ignore
+                pythoncom.CoUninitialize()
+            except Exception as e:
+                log.warning("CoUninitialize failed: %s", e)
+            self._co_initialized = False
 
     # ── Request dispatcher ────────────────────────────────────
 

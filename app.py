@@ -216,9 +216,16 @@ def upload():
 
 # ─── Routes: direct QBD connection ───────────────────────────────
 
-# Module-level state for the QBD session (singleton — one company open at a time)
+# Module-level state for the QBD session.
+#
+# NOTE: we never keep a live COM extractor object across requests. QBXMLRP2 is
+# a Single-Threaded Apartment COM object — opening it on the Flask request
+# thread and then calling extract_* on a background worker thread crashes the
+# process (RPC_E_WRONG_THREAD). Instead we store only the intent-to-connect
+# (company file and validated flag), and each operation (validate on Connect,
+# run on Extract) opens/closes its own session inside the thread that uses it.
 _qbd_state: dict = {
-    "extractor": None,
+    "extractor": None,        # "demo" sentinel or None; never a live COM object
     "connected": False,
     "company_file": "",
     "error": "",
@@ -268,21 +275,19 @@ def qbd_status():
 
 @app.route("/api/qbd/connect", methods=["POST"])
 def qbd_connect():
-    """Open a QBXMLRP2 session to the currently-open QBD company file
-    (or to a file path if provided)."""
+    """Validate that a QBXMLRP2 session can be opened to QBD, then close it.
+
+    We do *not* hold the COM session open across HTTP requests — it's an STA
+    object and would crash as soon as the next (background) thread touches it.
+    Instead we do a quick open+close on a worker thread here just to confirm
+    QBD is running and the Application Certificate is granted, and remember
+    the company_file path. The real Extract call re-opens its own session
+    inside its own worker thread.
+    """
     data = request.get_json(silent=True) or {}
     company_file = (data.get("company_file") or "").strip()
 
-    # Close any stale session first
-    if _qbd_state["extractor"]:
-        try:
-            _qbd_state["extractor"].close()
-        except Exception:
-            pass
-
     # ── Demo Mode short-circuit ──
-    # Lets the full UI flow (connect → extract → migrate) be recorded or
-    # presented without a real QuickBooks Desktop install.
     if not IS_WINDOWS and DEMO_MODE:
         fake_file = company_file or r"C:\Users\Public\Documents\Intuit\QuickBooks\Company Files\Sample Construction Co.QBW"
         _qbd_state.update({
@@ -298,39 +303,62 @@ def qbd_connect():
             "message": "Connected to QuickBooks Desktop",
         })
 
-    info = QBDConnectionInfo(
-        app_name="QBD-QBO Migration",
-        app_id="",
-        company_file=company_file,
-        connection_mode=1,
-    )
-    ex = QBDExtractor(info)
-    try:
-        meta = ex.open()
-        _qbd_state.update({
-            "extractor": ex,
-            "connected": True,
-            "company_file": meta.get("company_file", ""),
-            "error": "",
-        })
-        return jsonify({"success": True, **meta})
-    except QBDUnavailable as e:
-        _qbd_state.update({"extractor": None, "connected": False, "error": str(e)})
-        return jsonify({"success": False, "message": str(e), "windows": IS_WINDOWS}), 400
-    except Exception as e:
-        log.exception("QBD connect failed")
-        _qbd_state.update({"extractor": None, "connected": False, "error": str(e)})
-        return jsonify({"success": False, "message": str(e)}), 500
+    # Do the real open/close on a worker thread so COM lives in exactly one
+    # thread for its whole lifetime.
+    result: dict = {}
+
+    def _validate():
+        info = QBDConnectionInfo(
+            app_name="QBD-QBO Migration",
+            app_id="",
+            company_file=company_file,
+            connection_mode=1,
+        )
+        ex = QBDExtractor(info)
+        try:
+            meta = ex.open()
+            result["ok"] = True
+            result["meta"] = meta
+        except QBDUnavailable as e:
+            result["ok"] = False
+            result["error"] = str(e)
+            result["unavailable"] = True
+        except Exception as e:
+            result["ok"] = False
+            result["error"] = str(e)
+        finally:
+            try:
+                ex.close()
+            except Exception:
+                pass
+
+    t = threading.Thread(target=_validate, daemon=True)
+    t.start()
+    t.join(timeout=60)
+
+    if t.is_alive():
+        _qbd_state.update({"extractor": None, "connected": False,
+                           "error": "Connect timed out — is QBD running with a company file open?"})
+        return jsonify({"success": False, "message": _qbd_state["error"]}), 504
+
+    if not result.get("ok"):
+        err = result.get("error", "Unknown error")
+        _qbd_state.update({"extractor": None, "connected": False, "error": err})
+        status_code = 400 if result.get("unavailable") else 500
+        return jsonify({"success": False, "message": err, "windows": IS_WINDOWS}), status_code
+
+    meta = result["meta"]
+    _qbd_state.update({
+        "extractor": None,  # intentionally do NOT keep the COM object
+        "connected": True,
+        "company_file": company_file or meta.get("company_file", ""),
+        "error": "",
+    })
+    return jsonify({"success": True, **meta})
 
 
 @app.route("/api/qbd/disconnect", methods=["POST"])
 def qbd_disconnect():
-    ex = _qbd_state.get("extractor")
-    if ex and ex != "demo":
-        try:
-            ex.close()
-        except Exception:
-            pass
     _qbd_state.update({"extractor": None, "connected": False, "company_file": "", "error": ""})
     return jsonify({"success": True})
 
@@ -342,7 +370,7 @@ def qbd_extract():
     existing log console in the UI shows it in real time."""
     if _qbd_progress["running"]:
         return jsonify({"success": False, "message": "Extraction already running"}), 409
-    if not _qbd_state["connected"] or not _qbd_state["extractor"]:
+    if not _qbd_state["connected"]:
         return jsonify({"success": False, "message": "Connect to QBD first"}), 400
 
     t = threading.Thread(target=_run_qbd_extract, daemon=True)
@@ -373,12 +401,27 @@ def _run_qbd_extract():
         _qbd_progress["entities"][name] = status
         _emit("qbd-progress", f"{name}: {status}", name=name, status=status)
 
+    is_demo = _qbd_state.get("extractor") == "demo"
+    company_file = _qbd_state.get("company_file", "")
+
+    ex: QBDExtractor | None = None
     try:
-        ex = _qbd_state["extractor"]
-        if ex == "demo":
+        if is_demo:
             counts = _demo_extract_all(progress)
         else:
+            # Open a FRESH QBXMLRP2 session inside this worker thread. COM
+            # objects cannot be shared across threads — this is what prevents
+            # the silent crash after the first entity.
+            info = QBDConnectionInfo(
+                app_name="QBD-QBO Migration",
+                app_id="",
+                company_file=company_file,
+                connection_mode=1,
+            )
+            ex = QBDExtractor(info)
+            ex.open()
             counts = ex.extract_all(EXPORT_DIR, progress=progress)
+
         _emit(
             "qbd-complete",
             f"Extracted {sum(c for c in counts.values() if c >= 0)} total rows across "
@@ -389,6 +432,11 @@ def _run_qbd_extract():
         log.exception("QBD extraction failed")
         _emit("error", f"QBD extraction failed: {e}")
     finally:
+        if ex is not None:
+            try:
+                ex.close()
+            except Exception:
+                pass
         _qbd_progress["running"] = False
         qbd_log.removeHandler(handler)
 
@@ -775,10 +823,14 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)-7s  %(
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5050))
+    # Debug reloader is incompatible with long-running COM worker threads on
+    # Windows (saving a file mid-extract would kill the process). Default off;
+    # set FLASK_DEBUG=1 to override for frontend work only.
+    debug = os.environ.get("FLASK_DEBUG", "0") == "1"
     banner = "=" * 60
     print(f"\n{banner}")
     print("  QBD → QuickBooks Online Migration Connector")
     print(f"  Mode:  {'DEMO (no Intuit app configured)' if DEMO_MODE else ENVIRONMENT.upper()}")
     print(f"  Open:  http://localhost:{port}")
     print(f"{banner}\n")
-    app.run(host="0.0.0.0", port=port, debug=True, threaded=True)
+    app.run(host="0.0.0.0", port=port, debug=debug, threaded=True, use_reloader=debug)
