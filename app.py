@@ -275,14 +275,17 @@ def qbd_status():
 
 @app.route("/api/qbd/connect", methods=["POST"])
 def qbd_connect():
-    """Validate that a QBXMLRP2 session can be opened to QBD, then close it.
+    """Record the intent to connect to QBD. The real COM session is opened
+    inside the Extract worker thread — not here.
 
-    We do *not* hold the COM session open across HTTP requests — it's an STA
-    object and would crash as soon as the next (background) thread touches it.
-    Instead we do a quick open+close on a worker thread here just to confirm
-    QBD is running and the Application Certificate is granted, and remember
-    the company_file path. The real Extract call re-opens its own session
-    inside its own worker thread.
+    Why: QBXMLRP2 is an STA COM object. Opening a session here and closing
+    it before Extract runs has been observed to put QBD into a state where
+    the next OpenConnection2 call returns 0x80040408 "Could not start
+    QuickBooks". Keeping COM entirely inside the Extract worker thread
+    (open → walk entities → close, all on one thread) is the reliable path.
+
+    Trade-off for video: the QBD "Application Certificate" permission
+    dialog will pop on Extract, not on Connect. That's still on-camera.
     """
     data = request.get_json(silent=True) or {}
     company_file = (data.get("company_file") or "").strip()
@@ -303,58 +306,32 @@ def qbd_connect():
             "message": "Connected to QuickBooks Desktop",
         })
 
-    # Do the real open/close on a worker thread so COM lives in exactly one
-    # thread for its whole lifetime.
-    result: dict = {}
+    if not IS_WINDOWS:
+        msg = ("Direct QBD connection requires Windows and the QuickBooks SDK. "
+               "Use the Upload Files option instead.")
+        _qbd_state.update({"extractor": None, "connected": False, "error": msg})
+        return jsonify({"success": False, "message": msg, "windows": False}), 400
 
-    def _validate():
-        info = QBDConnectionInfo(
-            app_name="QBD-QBO Migration",
-            app_id="",
-            company_file=company_file,
-            connection_mode=1,
-        )
-        ex = QBDExtractor(info)
-        try:
-            meta = ex.open()
-            result["ok"] = True
-            result["meta"] = meta
-        except QBDUnavailable as e:
-            result["ok"] = False
-            result["error"] = str(e)
-            result["unavailable"] = True
-        except Exception as e:
-            result["ok"] = False
-            result["error"] = str(e)
-        finally:
-            try:
-                ex.close()
-            except Exception:
-                pass
+    # Soft check: can we at least import pywin32?
+    try:
+        import win32com.client  # noqa: F401
+    except ImportError as e:
+        msg = f"pywin32 is not installed: {e}. Run: pip install pywin32"
+        _qbd_state.update({"extractor": None, "connected": False, "error": msg})
+        return jsonify({"success": False, "message": msg}), 500
 
-    t = threading.Thread(target=_validate, daemon=True)
-    t.start()
-    t.join(timeout=60)
-
-    if t.is_alive():
-        _qbd_state.update({"extractor": None, "connected": False,
-                           "error": "Connect timed out — is QBD running with a company file open?"})
-        return jsonify({"success": False, "message": _qbd_state["error"]}), 504
-
-    if not result.get("ok"):
-        err = result.get("error", "Unknown error")
-        _qbd_state.update({"extractor": None, "connected": False, "error": err})
-        status_code = 400 if result.get("unavailable") else 500
-        return jsonify({"success": False, "message": err, "windows": IS_WINDOWS}), status_code
-
-    meta = result["meta"]
     _qbd_state.update({
-        "extractor": None,  # intentionally do NOT keep the COM object
+        "extractor": None,
         "connected": True,
-        "company_file": company_file or meta.get("company_file", ""),
+        "company_file": company_file or "(currently open company file)",
         "error": "",
     })
-    return jsonify({"success": True, **meta})
+    return jsonify({
+        "success": True,
+        "company_file": _qbd_state["company_file"],
+        "message": ("Ready. Click Extract Now — QuickBooks will ask for permission "
+                    "the first time."),
+    })
 
 
 @app.route("/api/qbd/disconnect", methods=["POST"])
