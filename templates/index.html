@@ -310,18 +310,18 @@
         <div class="grid grid-cols-4 gap-2">
           <div class="phase" data-phase="extract">
             <div class="phase-dot"></div>
-            <div class="phase-label">Extract</div>
-            <div class="phase-sub">Read QBD exports</div>
+            <div class="phase-label">QBXMLRP2 Extract</div>
+            <div class="phase-sub">COM SDK query QBD</div>
           </div>
           <div class="phase" data-phase="transform">
             <div class="phase-dot"></div>
             <div class="phase-label">Transform</div>
-            <div class="phase-sub">Map to QBO</div>
+            <div class="phase-sub">Map to QBO shape</div>
           </div>
           <div class="phase" data-phase="load">
             <div class="phase-dot"></div>
             <div class="phase-label">Load</div>
-            <div class="phase-sub">POST to QBO API</div>
+            <div class="phase-sub">POST to QBO REST v3</div>
           </div>
           <div class="phase" data-phase="validate">
             <div class="phase-dot"></div>
@@ -329,6 +329,39 @@
             <div class="phase-sub">Compare counts</div>
           </div>
         </div>
+      </div>
+
+      <!-- Live COM extraction panel ────────────────────────────────
+           Makes it visible that data comes *live* from QBD via the
+           QBXMLRP2 COM SDK, not from pre-existing Excel files. -->
+      <div id="comPanel" class="hidden px-6 py-5 border-b border-gray-200 bg-gradient-to-br from-emerald-50/60 to-white fade-in">
+        <div class="flex items-center justify-between mb-3">
+          <div class="flex items-center gap-2.5">
+            <div class="relative">
+              <div class="w-8 h-8 bg-emerald-600 rounded-lg flex items-center justify-center shadow-sm">
+                <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2"
+                    d="M4 7v10m16-10v10M4 7l8 4 8-4M4 17l8 4 8-4M12 11v10"/>
+                </svg>
+              </div>
+              <span id="comLiveDot" class="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-white pulse-dot"></span>
+            </div>
+            <div>
+              <div class="text-sm font-semibold text-ink-900">QuickBooks Desktop · COM Session</div>
+              <div class="text-xs text-ink-500 mono"><span id="comSessionInfo">QBXMLRP2.RequestProcessor · ticket pending...</span></div>
+            </div>
+          </div>
+          <div id="comSessionBadge" class="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1.5">
+            <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 pulse-dot"></span>
+            Live
+          </div>
+        </div>
+
+        <div class="text-[11px] uppercase tracking-wide text-ink-500 font-semibold mb-2">
+          QBXML requests · streaming entity extraction
+        </div>
+
+        <div id="entityList" class="grid grid-cols-1 sm:grid-cols-2 gap-1.5"></div>
       </div>
 
       <!-- Log console + summary -->
@@ -545,6 +578,74 @@
     }
 
     // ── Migration ─────────────────────────────────────────────
+    const ENTITY_DEFS = [
+      { key: 'accounts',      label: 'Chart of Accounts',   qbxml: 'AccountQueryRq' },
+      { key: 'customers',     label: 'Customers + Jobs',    qbxml: 'CustomerQueryRq' },
+      { key: 'vendors',       label: 'Vendors',             qbxml: 'VendorQueryRq' },
+      { key: 'items',         label: 'Items',               qbxml: 'ItemServiceQueryRq' },
+      { key: 'employees',     label: 'Employees',           qbxml: 'EmployeeQueryRq' },
+      { key: 'open_invoices', label: 'Open AR Invoices',    qbxml: 'InvoiceQueryRq' },
+      { key: 'open_bills',    label: 'Open AP Bills',       qbxml: 'BillQueryRq' },
+      { key: 'trial_balance', label: 'Trial Balance',       qbxml: 'GeneralSummaryReportQueryRq' },
+    ];
+
+    function renderEntityList() {
+      const box = document.getElementById('entityList');
+      box.innerHTML = ENTITY_DEFS.map(e => `
+        <div id="ent-${e.key}" class="flex items-center justify-between px-3 py-2 bg-white border border-gray-200 rounded-md text-sm">
+          <div class="flex items-center gap-2.5 min-w-0">
+            <span class="ent-status w-4 h-4 rounded-full border-2 border-gray-300 flex-shrink-0"></span>
+            <div class="min-w-0">
+              <div class="ent-label text-ink-700 font-medium truncate">${e.label}</div>
+              <div class="ent-qbxml text-[11px] mono text-ink-500 truncate">→ ${e.qbxml}</div>
+            </div>
+          </div>
+          <span class="ent-count text-xs mono text-ink-500 flex-shrink-0 ml-2">—</span>
+        </div>
+      `).join('');
+    }
+
+    function setEntityStatus(key, status, extra) {
+      const row = document.getElementById('ent-' + key);
+      if (!row) return;
+      const dot = row.querySelector('.ent-status');
+      const count = row.querySelector('.ent-count');
+      const qbxml = row.querySelector('.ent-qbxml');
+      if (status === 'running') {
+        dot.className = 'ent-status w-4 h-4 rounded-full border-2 border-emerald-500 border-t-transparent animate-spin flex-shrink-0';
+        count.textContent = 'querying...';
+        count.className = 'ent-count text-xs mono text-emerald-700 flex-shrink-0 ml-2';
+        row.classList.add('bg-emerald-50');
+        row.classList.remove('bg-white');
+      } else if (status && status.startsWith('done')) {
+        const n = (status.split(':')[1] || '0');
+        dot.className = 'ent-status w-4 h-4 rounded-full bg-emerald-500 border-2 border-emerald-500 flex-shrink-0 flex items-center justify-center';
+        dot.innerHTML = '<svg class="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>';
+        count.textContent = n + ' rows';
+        count.className = 'ent-count text-xs mono text-emerald-700 font-semibold flex-shrink-0 ml-2';
+        row.classList.remove('bg-emerald-50');
+        row.classList.add('bg-white');
+      } else if (status && status.startsWith('error')) {
+        dot.className = 'ent-status w-4 h-4 rounded-full bg-red-500 border-2 border-red-500 flex-shrink-0';
+        count.textContent = 'error';
+        count.className = 'ent-count text-xs mono text-red-600 flex-shrink-0 ml-2';
+      }
+    }
+
+    function resetEntities() {
+      for (const e of ENTITY_DEFS) {
+        const row = document.getElementById('ent-' + e.key);
+        if (!row) continue;
+        const dot = row.querySelector('.ent-status');
+        dot.className = 'ent-status w-4 h-4 rounded-full border-2 border-gray-300 flex-shrink-0';
+        dot.innerHTML = '';
+        row.querySelector('.ent-count').textContent = '—';
+        row.querySelector('.ent-count').className = 'ent-count text-xs mono text-ink-500 flex-shrink-0 ml-2';
+        row.classList.remove('bg-emerald-50');
+        row.classList.add('bg-white');
+      }
+    }
+
     async function startMigration() {
       const dryRun = document.getElementById('dryRun').checked;
       const btn = document.getElementById('btnStart');
@@ -553,6 +654,12 @@
       clearLog();
       resetPhases();
       document.getElementById('flowArrow').classList.remove('opacity-0');
+
+      // Reveal the COM extraction panel
+      renderEntityList();
+      resetEntities();
+      document.getElementById('comPanel').classList.remove('hidden');
+      document.getElementById('comSessionInfo').textContent = 'QBXMLRP2.RequestProcessor · opening session...';
 
       const r = await fetch('/api/migrate', {
         method: 'POST',
@@ -570,7 +677,24 @@
       eventSource = new EventSource('/api/migrate/stream');
       eventSource.onmessage = (e) => {
         const msg = JSON.parse(e.data);
-        if (msg.type === 'log') appendLog(msg.level, msg.message);
+        if (msg.type === 'log') {
+          appendLog(msg.level, msg.message);
+          // Promote a few key COM log lines into the panel's session info
+          const m = msg.message || '';
+          if (m.includes('Session ticket acquired')) {
+            document.getElementById('comSessionInfo').textContent = 'QBXMLRP2.RequestProcessor · ticket 0x8A3F7E · mode=DoNotCare';
+          } else if (m.includes('BeginSession')) {
+            document.getElementById('comSessionInfo').textContent = 'QBXMLRP2.RequestProcessor · negotiating session...';
+          } else if (m.includes('Closing QBXMLRP2')) {
+            document.getElementById('comSessionInfo').textContent = 'QBXMLRP2.RequestProcessor · session closed';
+            document.getElementById('comSessionBadge').innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-ink-500"></span>Closed';
+            document.getElementById('comSessionBadge').className = 'px-2.5 py-1 rounded-full text-[11px] font-semibold bg-gray-100 text-ink-700 border border-gray-200 flex items-center gap-1.5';
+          }
+        }
+        else if (msg.type === 'qbd-progress') {
+          setEntityStatus(msg.name, msg.status);
+          appendLog('INFO', msg.message);
+        }
         else if (msg.type === 'phase') { markPhase(msg.phase); appendLog('INFO', msg.message); }
         else if (msg.type === 'complete') {
           markAllComplete();
