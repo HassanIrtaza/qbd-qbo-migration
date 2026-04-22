@@ -720,15 +720,55 @@ def _run_migration(dry_run: bool):
         dry_run = True
 
     try:
-        # ── Phase 1: Extract ──
-        _emit("phase", "Phase 1: Extracting from QBD Excel exports...", phase="extract")
+        # ── Phase 0: auto-extract from QBD (runs before the 4-phase ETL
+        # so the user only clicks Start Migration; no separate Extract step).
+        # In DEMO_MODE this streams a simulated QBXMLRP2 log and writes real
+        # Excel files; in real mode it runs the live QBXMLRP2 session.
+        cust_file = EXPORT_DIR / "QBD_Customers.xlsx"
+        qbd_connected = _qbd_state.get("connected", False)
+
+        if qbd_connected:
+            _emit("phase", "Connecting to QuickBooks Desktop and extracting data...",
+                  phase="extract")
+            migration_status["phase"] = "extract"
+
+            def _progress(name: str, status: str):
+                _emit("qbd-progress", f"{name}: {status}", name=name, status=status)
+
+            is_demo = _qbd_state.get("extractor") == "demo"
+            company_file = _qbd_state.get("company_file", "")
+
+            ex: QBDExtractor | None = None
+            try:
+                if is_demo:
+                    _demo_extract_all(_progress)
+                else:
+                    info = QBDConnectionInfo(
+                        app_name="QBD-QBO Migration",
+                        app_id="",
+                        company_file=company_file,
+                        connection_mode=1,
+                    )
+                    ex = QBDExtractor(info)
+                    ex.open()
+                    ex.extract_all(EXPORT_DIR, progress=_progress)
+            finally:
+                if ex is not None:
+                    try:
+                        ex.close()
+                    except Exception:
+                        pass
+
+        # ── Phase 1: Extract (read the Excel files we just produced) ──
+        _emit("phase", "Phase 1: Reading extracted QBD data...", phase="extract")
         migration_status["phase"] = "extract"
 
         extractor = qm.FileExtractor()
 
-        cust_file = EXPORT_DIR / "QBD_Customers.xlsx"
         if not cust_file.exists():
-            raise FileNotFoundError("QBD_Customers.xlsx not found — upload files or generate sample data")
+            raise FileNotFoundError(
+                "No QBD data available. Connect to QuickBooks Desktop first."
+            )
 
         accounts_df = extractor.extract_accounts(str(EXPORT_DIR / "QBD_ChartOfAccounts.xlsx"))
         customers, jobs = extractor.extract_customers(str(cust_file))
