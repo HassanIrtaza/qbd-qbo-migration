@@ -116,7 +116,11 @@ class QBDExtractor:
         try:
             self._rp = win32com.client.Dispatch("QBXMLRP2.RequestProcessor")
             self._rp.OpenConnection2(self.info.app_id, self.info.app_name, self.info.connection_mode)
-            self._ticket = self._rp.BeginSession(self.info.company_file, 0)  # 0 = dontCare
+            # BeginSession QBFileMode: 0=SingleUser, 1=MultiUser, 2=DoNotCare.
+            # DoNotCare is the only safe choice when QBD already has the file
+            # open — the other modes can fail with 0x80040408 "Could not start
+            # QuickBooks" because they fight QBD's existing file mode.
+            self._ticket = self._rp.BeginSession(self.info.company_file, 2)
             log.info("QBD session opened (ticket=%s)", self._ticket)
             return {
                 "connected": True,
