@@ -55,7 +55,13 @@ CLIENT_SECRET = os.environ.get("QBO_CLIENT_SECRET", "")
 REDIRECT_URI = os.environ.get("QBO_REDIRECT_URI", "http://localhost:5050/callback")
 ENVIRONMENT = os.environ.get("QBO_ENVIRONMENT", "sandbox")
 SCOPES = os.environ.get("QBO_SCOPES", "com.intuit.quickbooks.accounting")
-DEMO_MODE = not (CLIENT_ID and CLIENT_SECRET)
+
+# DEMO_MODE fakes both QBD and QBO connections for presentation / video
+# recording. It's enabled automatically when no QBO credentials are set,
+# and can be forced on even when creds exist by setting DEMO=1 — useful
+# when recording on a VM that has real QBD installed but you want a
+# guaranteed-green run for the camera.
+DEMO_MODE = (not (CLIENT_ID and CLIENT_SECRET)) or os.environ.get("DEMO", "0") == "1"
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET", secrets.token_hex(16))
@@ -240,6 +246,14 @@ def qbd_platform():
     """Tell the UI whether direct QBD connection is possible on this host.
     In DEMO_MODE we simulate a connection even on non-Windows so the flow
     can be recorded/presented without a real QuickBooks Desktop install."""
+    # DEMO_MODE takes priority so forcing DEMO=1 on Windows also fakes QBD
+    if DEMO_MODE:
+        return jsonify({
+            "windows": IS_WINDOWS,
+            "supported": True,
+            "demo": True,
+            "message": "Demo Mode — direct-connect is simulated for presentations.",
+        })
     if IS_WINDOWS:
         return jsonify({
             "windows": True,
@@ -290,8 +304,10 @@ def qbd_connect():
     data = request.get_json(silent=True) or {}
     company_file = (data.get("company_file") or "").strip()
 
-    # ── Demo Mode short-circuit ──
-    if not IS_WINDOWS and DEMO_MODE:
+    # ── Demo Mode short-circuit (works on both Windows and macOS/Linux) ──
+    # If DEMO=1 or no QBO creds, skip real COM entirely. The Extract step
+    # will stream a simulated QBXMLRP2 log and write real Excel files.
+    if DEMO_MODE:
         fake_file = company_file or r"C:\Users\Public\Documents\Intuit\QuickBooks\Company Files\Sample Construction Co.QBW"
         _qbd_state.update({
             "extractor": "demo",
