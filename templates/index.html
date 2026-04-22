@@ -71,6 +71,112 @@
     </div>
   </header>
 
+  <!-- ── QBD Application Certificate modal (demo) ────────────────────
+       Mimics the real dialog QuickBooks Desktop shows when an app first
+       requests access to a company file. Appears when Connect is clicked
+       so the video has the same permission-grant beat even off the VM. -->
+  <div id="qbdCertOverlay" class="hidden fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+    <div id="qbdCertDialog" class="bg-[#f0f0f0] border border-gray-400 shadow-2xl w-full max-w-2xl rounded-sm font-sans fade-in"
+         style="font-family: 'Segoe UI', Tahoma, sans-serif;">
+      <!-- Windows-style title bar -->
+      <div class="bg-gradient-to-b from-[#e3e3e3] to-[#cfcfcf] border-b border-gray-400 px-3 py-1.5 flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <div class="w-4 h-4 bg-[#2CA01C] rounded-sm flex items-center justify-center">
+            <span class="text-white text-[9px] font-bold">QB</span>
+          </div>
+          <span class="text-[13px] font-semibold text-ink-900">QuickBooks - Application Certificate</span>
+        </div>
+        <span class="text-gray-500 text-sm px-2">×</span>
+      </div>
+
+      <!-- Step 1 -->
+      <div id="qbdCertStep1" class="p-6 space-y-4 text-[13px] text-ink-900">
+        <div class="flex gap-3">
+          <svg class="w-10 h-10 flex-shrink-0 text-amber-500" fill="currentColor" viewBox="0 0 24 24">
+            <path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/>
+          </svg>
+          <div>
+            <p class="font-semibold mb-2">An application is requesting access to the following QuickBooks company file:</p>
+            <p class="bg-white border border-gray-300 px-3 py-2 text-[12px]">Sample Construction Co.</p>
+          </div>
+        </div>
+
+        <p>Access may include reading or modifying QuickBooks data, as well as enhancing the QuickBooks user interface.</p>
+
+        <p>The Application Calls Itself:</p>
+        <p class="bg-white border border-gray-300 px-3 py-2 text-[12px]">QBD-QBO Migration</p>
+
+        <p class="font-semibold pt-2">Do you want to allow this application to read and modify this company file?</p>
+
+        <div class="space-y-1.5 pl-2">
+          <label class="flex items-start gap-2 cursor-pointer">
+            <input type="radio" name="certChoice" value="no" class="mt-0.5">
+            <span>No</span>
+          </label>
+          <label class="flex items-start gap-2 cursor-pointer">
+            <input type="radio" name="certChoice" value="prompt" class="mt-0.5">
+            <span>Yes, prompt each time</span>
+          </label>
+          <label class="flex items-start gap-2 cursor-pointer">
+            <input type="radio" name="certChoice" value="file-open" class="mt-0.5" checked>
+            <span>Yes, whenever this QuickBooks company file is open</span>
+          </label>
+          <label class="flex items-start gap-2 cursor-pointer">
+            <input type="radio" name="certChoice" value="always" class="mt-0.5">
+            <span>Yes, always; allow access even if QuickBooks is not running</span>
+          </label>
+        </div>
+
+        <label class="flex items-start gap-2 pt-2 text-[12px] cursor-pointer">
+          <input type="checkbox" class="mt-0.5">
+          <span>Allow this application to access personal data such as Social Security Numbers and customer credit card information.</span>
+        </label>
+
+        <div class="flex justify-end gap-2 pt-4 border-t border-gray-300 mt-4">
+          <button onclick="certCancel()"
+            class="px-5 py-1.5 bg-gradient-to-b from-[#f5f5f5] to-[#e0e0e0] border border-gray-400 text-[13px] hover:from-[#e8f0e0] hover:to-[#d0e0c0]">
+            Cancel
+          </button>
+          <button onclick="certContinue()"
+            class="px-5 py-1.5 bg-gradient-to-b from-[#f5f5f5] to-[#e0e0e0] border border-gray-400 text-[13px] font-semibold hover:from-[#e8f0e0] hover:to-[#d0e0c0]">
+            Continue...
+          </button>
+          <button class="px-5 py-1.5 bg-gradient-to-b from-[#f5f5f5] to-[#e0e0e0] border border-gray-400 text-[13px]">
+            Help
+          </button>
+        </div>
+      </div>
+
+      <!-- Step 2: confirmation -->
+      <div id="qbdCertStep2" class="hidden p-6 space-y-4 text-[13px] text-ink-900">
+        <div class="flex gap-3">
+          <svg class="w-10 h-10 flex-shrink-0 text-[#2CA01C]" fill="currentColor" viewBox="0 0 24 24">
+            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+          </svg>
+          <div>
+            <p class="font-semibold mb-2">Access Confirmation</p>
+            <p>You have chosen to grant the application <strong>QBD-QBO Migration</strong> access to the QuickBooks company file <strong>Sample Construction Co.</strong> whenever this company file is open.</p>
+          </div>
+        </div>
+
+        <div class="bg-white border border-gray-300 p-3 text-[12px] space-y-1">
+          <p><strong>Access Rights</strong></p>
+          <p>• Read and modify QuickBooks data</p>
+          <p>• Enhance the QuickBooks user interface</p>
+        </div>
+
+        <p class="text-[12px] text-ink-700">This access can be revoked or changed at any time from <em>Edit → Preferences → Integrated Applications → Company Preferences</em>.</p>
+
+        <div class="flex justify-end gap-2 pt-4 border-t border-gray-300 mt-4">
+          <button onclick="certDone()"
+            class="px-8 py-1.5 bg-gradient-to-b from-[#f5f5f5] to-[#e0e0e0] border border-gray-400 text-[13px] font-semibold hover:from-[#e8f0e0] hover:to-[#d0e0c0]">
+            Done
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <main class="max-w-7xl mx-auto px-6 py-6 space-y-6">
 
     <!-- Connection row -->
@@ -101,8 +207,8 @@
                 <span class="text-ink-700 font-medium">Connected to QuickBooks Desktop</span>
               </div>
               <div class="text-sm">
-                <div class="text-ink-500">Company file</div>
-                <div id="qbdCompanyFile" class="mono text-ink-700 text-xs truncate">—</div>
+                <div class="text-ink-500">Company</div>
+                <div class="text-ink-700">Sample Construction Co.</div>
               </div>
               <button onclick="qbdDisconnect()" class="w-full mt-2 px-3.5 py-2 bg-white border border-gray-300 text-ink-700 text-sm font-medium rounded-lg hover:bg-gray-50">
                 Disconnect
@@ -311,9 +417,32 @@
       }
     }
 
+    // Holds the pending connect promise resolver so the modal's
+    // Continue/Cancel buttons can finish the connect flow.
+    let _pendingConnect = null;
+
     async function qbdConnect() {
+      // Show the fake QuickBooks Application Certificate dialog first.
+      // Mirrors what the real QBD permission prompt looks like.
+      document.getElementById('qbdCertOverlay').classList.remove('hidden');
+      document.getElementById('qbdCertStep1').classList.remove('hidden');
+      document.getElementById('qbdCertStep2').classList.add('hidden');
+    }
+
+    function certCancel() {
+      document.getElementById('qbdCertOverlay').classList.add('hidden');
+    }
+
+    function certContinue() {
+      // Show step 2 (Access Confirmation)
+      document.getElementById('qbdCertStep1').classList.add('hidden');
+      document.getElementById('qbdCertStep2').classList.remove('hidden');
+    }
+
+    async function certDone() {
+      document.getElementById('qbdCertOverlay').classList.add('hidden');
+
       const btn = document.getElementById('btnQbdConnect');
-      const path = document.getElementById('qbdCompanyPath').value.trim();
       btn.disabled = true;
       const prev = btn.textContent;
       btn.innerHTML = '<span class="spinner"></span> Connecting...';
@@ -321,7 +450,7 @@
         const r = await fetch('/api/qbd/connect', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ company_file: path }),
+          body: JSON.stringify({ company_file: '' }),
         });
         const data = await r.json();
         if (!data.success) {
